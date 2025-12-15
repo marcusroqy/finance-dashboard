@@ -1,0 +1,11 @@
+# System & venv
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
+
+# User Data (Privacy & Isolation)
+userdata/
