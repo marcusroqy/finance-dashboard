@@ -3,19 +3,22 @@ import streamlit as st
 import pandas as pd
 
 # --- CONFIGURAÇÃO GLOBAL ---
-# Chave fornecida pelo usuário para acesso geral
-GOOGLE_API_KEY = "AIzaSyBOfDblxIlqxJ4yAJDHVaubO9jpkQeheFY"
+# Chave agora vem dos Secrets (Segurança)
 
 def analyze_finances(df, api_key=None):
     """
     Gera uma análise financeira usando o Google Gemini.
-    Usa a chave global hardcoded.
+    Usa a chave configurada nos Secrets do Streamlit.
     Args:
         df (pd.DataFrame): DataFrame com colunas 'Data', 'Descrição', 'Categoria', 'Valor'.
     """
     try:
-        # Configura a API com a chave global
-        genai.configure(api_key=GOOGLE_API_KEY)
+        # Tenta pegar a chave dos segredos
+        try:
+            secrets_key = st.secrets["gemini"]["api_key"]
+            genai.configure(api_key=secrets_key)
+        except Exception:
+             return "❌ Erro: Chave da API (Gemini) não encontrada nos Secrets. Configure [gemini] api_key = '...'."
         
         # Lista de tentativas de modelo (do mais novo para o mais compatível)
         models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-001', 'gemini-pro']
