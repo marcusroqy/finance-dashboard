@@ -181,8 +181,54 @@ if not st.session_state.get('logged_in', False):
             st.session_state['logged_in'] = True
             st.session_state['username'] = email
             st.rerun()
-    except:
-        pass # Streamlit < 1.42 ou erro na config
+    except Exception as e:
+        # Streamlit < 1.42 ou erro na config
+        print(f"Auth Check Error: {e}")
+
+    # --- DIAGNÓSTICO DE SECRETS (PRODUÇÃO) ---
+    # Verifica se os segredos estão carregados corretamente para evitar Erro 400
+    missing_secrets = []
+    
+    # 1. Checa [auth]
+    if "auth" not in st.secrets:
+        missing_secrets.append("[auth] section missing")
+    else:
+        if "cookie_secret" not in st.secrets["auth"]:
+             missing_secrets.append("auth.cookie_secret missing")
+             
+    # 2. Checa [auth.google]
+    if "auth" not in st.secrets or "google" not in st.secrets["auth"]:
+        # Fallback check for flattened structure
+        if "google" not in st.secrets:
+             missing_secrets.append("[auth.google] section missing")
+    else:
+        g_auth = st.secrets["auth"]["google"]
+        if not g_auth.get("client_id"): missing_secrets.append("client_id missing in [auth.google]")
+        if not g_auth.get("client_secret"): missing_secrets.append("client_secret missing in [auth.google]")
+
+    # Se houver erros, exibe alerta amigável e PAUSA a execução
+    if missing_secrets:
+        st.error("⚠️ Erro de Configuração de Segredos (Streamlit Cloud)")
+        st.markdown(f"**O login não pode funcionar porque algumas chaves estão faltando:**")
+        for m in missing_secrets:
+            st.code(m, language="text")
+        st.info("Por favor, verifique se você copiou **EXATAMENTE** a estrutura TOML sugerida nas configurações do App.")
+        st.stop()
+        
+    # --- DEBUG INFO (REMOVER EM PRODUÇÃO DEPOIS) ---
+    # Mostra o que foi carregado para o usuário conferir
+    with st.expander("🕵️‍♂️ Debug de Configuração (Clique para expandir)", expanded=True):
+        st.info("Confira se estes dados batem com o Google Cloud Console:")
+        g_auth = st.secrets["auth"]["google"]
+        redirect_uri = st.secrets["auth"].get("redirect_uri", "NÃO DEFINIDA")
+        cid = g_auth.get("client_id", "")
+        csec = g_auth.get("client_secret", "")
+        
+        st.write(f"**Redirect URI Configurada:** `{redirect_uri}`")
+        st.write(f"**Client ID (Início):** `{cid[:15]}...`")
+        st.write(f"**Client Secret (Início):** `{csec[:5]}...`")
+        st.warning("⚠️ Se a URL acima não for **exatamente** a mesma da barra de endereços (ex: `https://...streamlit.app`), o login falhará!")
+    # -----------------------------------------------
 
     # Hero Section Layout
     col1, col2 = st.columns([1.5, 1])
