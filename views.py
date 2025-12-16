@@ -188,3 +188,355 @@ def render_extract_tab(df_filtered):
         },
         use_container_width=True, num_rows="dynamic", height=500
     )
+
+def render_budget_tab(df, budgets, username):
+    """Renderiza a aba de Metas de Gastos."""
+    import budget_manager  # Import local
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col2:
+        with st.container(border=True):
+            st.markdown("### 🎯 Definir Meta")
+            
+            # Lista de categorias disponíveis
+            all_cats = sorted(df['Categoria'].unique().tolist())
+            if not all_cats:
+                st.warning("Sem categorias para definir metas.")
+                return
+
+            cat_to_edit = st.selectbox("Escolha a Categoria", all_cats, key="budget_cat_sel")
+            
+            # Valor atual (se existir)
+            current_val = budgets.get(cat_to_edit, 0.0)
+            new_val = st.number_input("Limite Mensal (R$)", min_value=0.0, value=float(current_val), step=50.0, key="budget_val_in")
+            
+            if st.button("💾 Salvar Meta", use_container_width=True):
+                # Salva
+                updated_budgets = budget_manager.save_budget(username, cat_to_edit, new_val)
+                st.success(f"Meta de {cat_to_edit} atualizada!")
+                st.rerun() # Recarrega para atualizar visualização
+                
+    with col1:
+        st.markdown("### 📊 Acompanhamento Mensal")
+        
+        if not budgets:
+            st.info("👈 Defina sua primeira meta ao lado!")
+        
+        # Totais
+        total_budget = sum(budgets.values())
+        total_spent_general = df[df['Valor'] < 0]['Valor'].abs().sum()
+        
+        # Mostra barra geral se houver metas
+        if total_budget > 0:
+            st.caption(f"Visão Geral: R$ {total_spent_general:,.2f} gastos de R$ {total_budget:,.2f} previstos")
+            overall_prog = min(total_spent_general / total_budget, 1.0)
+            st.progress(overall_prog)
+        
+        st.markdown("---")
+        
+        # Renderiza barra por categoria meta
+        # Calcula gastos por categoria
+        spent_by_cat = df[df['Valor'] < 0].groupby('Categoria')['Valor'].sum().abs()
+        
+        # Ordena: Quem está mais perto de estourar aparece primeiro
+        # Lista de tuplas (cat, %usage)
+        cat_usage = []
+        for cat, limit in budgets.items():
+            spent = spent_by_cat.get(cat, 0.0)
+            usage = spent / limit if limit > 0 else 0
+            cat_usage.append((cat, limit, spent, usage))
+            
+        # Sort descending by usage
+        cat_usage.sort(key=lambda x: x[3], reverse=True)
+        
+        for cat, limit, spent, usage in cat_usage:
+            # Cor da barra e texto
+            if usage >= 1.0:
+                color = "red" # Estourou
+                emoji = "🚨"
+            elif usage >= 0.8:
+                color = "orange" # Alerta
+                emoji = "⚠️"
+            else:
+                color = "green" # Ok
+                emoji = "✅"
+                
+            col_txt, col_bar = st.columns([1, 2])
+            with col_txt:
+                st.markdown(f"**{cat}** {emoji}")
+                st.caption(f"R$ {spent:,.0f} / {limit:,.0f}")
+                
+            with col_bar:
+                # Progress bar nativa não aceita cor diretamente facilmente sem CSS hack ou novas versões, 
+                # mas podemos usar st.progress simples e contar com o emoji/contexto.
+                # Ou usar Markdown HTML para cor. Vamos de st.progress padrão por enquanto + Markdown se crítico.
+                # Hack visual: :red[...] no texto ajuda.
+                st.progress(min(usage, 1.0))
+                if usage > 1.0:
+                    st.caption(f":red[Excedido em R$ {spent - limit:,.2f}]")
+
+def render_manager_tab(username):
+    """Renderiza a aba do Gestor de Contas (Listas Compartilhadas)."""
+    import bills_manager
+    from datetime import datetime, timedelta
+    import calendar
+    
+    # --- SESSION STATE INIT ---
+    if 'manager_view' not in st.session_state:
+        st.session_state['manager_view'] = 'list_selection'
+    if 'current_list_id' not in st.session_state:
+        st.session_state['current_list_id'] = None
+    if 'manager_ref_date' not in st.session_state:
+        st.session_state['manager_ref_date'] = datetime.today().replace(day=1)
+
+    # ==========================
+    # VIEW 1: SELEÇÃO DE LISTA
+    # ==========================
+    if st.session_state['manager_view'] == 'list_selection':
+        st.markdown("### 📂 Suas Listas")
+        st.caption("Selecione um grupo ou crie um novo para começar.")
+        
+        col_lists, col_actions = st.columns([2, 1])
+        
+        with col_actions:
+            with st.container(border=True):
+                st.markdown("##### Nova Lista")
+                tab1, tab2 = st.tabs(["Criar", "Entrar"])
+                with tab1:
+                    new_name = st.text_input("Nome", placeholder="Ex: Casa", key="new_list_name")
+                    if st.button("Criar", type="primary", use_container_width=True):
+                        if new_name:
+                            _, code = bills_manager.create_list(new_name, username)
+                            st.success(f"Criado! Código: {code}")
+                            st.rerun()
+                with tab2:
+                    code_in = st.text_input("Código", placeholder="ABC123", key="join_code")
+                    if st.button("Entrar", use_container_width=True):
+                        ok, msg = bills_manager.join_list(code_in, username)
+                        if ok: st.success(msg); st.rerun()
+                        else: st.error(msg)
+        
+        with col_lists:
+            my_lists = bills_manager.get_user_lists(username)
+            if not my_lists:
+                st.info("👋 Você ainda não participa de nenhuma lista.")
+            else:
+                for l in my_lists:
+                    with st.container(border=True):
+                         c1, c2 = st.columns([5, 1])
+                         c1.markdown(f"#### 📁 {l['name']}")
+                         if c2.button("Abrir", key=f"open_{l['id']}", use_container_width=True):
+                             st.session_state['current_list_id'] = l['id']
+                             st.session_state['manager_view'] = 'list_details'
+                             st.rerun()
+
+    # ===============================
+    # VIEW 2: DETALHES DA LISTA (DASH)
+    # ===============================
+    elif st.session_state['manager_view'] == 'list_details':
+        list_id = st.session_state['current_list_id']
+        list_data = bills_manager.get_list_details(list_id)
+        
+        if not list_data:
+            st.error("Lista não encontrada.")
+            if st.button("Voltar"):
+                st.session_state['manager_view'] = 'list_selection'
+                st.rerun()
+            return
+
+        # --- HEADER (Navigation & Info) ---
+        c_back, c_title, c_code = st.columns([1, 4, 2])
+        if c_back.button("🔙 Voltar"):
+            st.session_state['manager_view'] = 'list_selection'
+            st.rerun()
+            
+        c_title.markdown(f"## 🏘️ {list_data['name']}")
+        c_code.markdown(f"🔑 **{list_data['invite_code']}** (Convite)")
+        
+        st.divider()
+        
+        # --- MONTH NAVIGATION ---
+        ref_date = st.session_state['manager_ref_date']
+        col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
+        
+        with col_nav1:
+            if st.button("◀️ Anterior", use_container_width=True):
+                nm = ref_date.month - 1
+                ny = ref_date.year
+                if nm == 0: nm=12; ny-=1
+                st.session_state['manager_ref_date'] = ref_date.replace(year=ny, month=nm)
+                st.rerun()
+                
+        with col_nav2:
+             pt_months = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+             month_display = f"{pt_months[ref_date.month]} {ref_date.year}"
+             st.markdown(f"<h3 style='text-align: center; margin: 0; color: #4A90E2;'>{month_display}</h3>", unsafe_allow_html=True)
+             
+        with col_nav3:
+            if st.button("Próximo ▶️", use_container_width=True):
+                nm = ref_date.month + 1
+                ny = ref_date.year
+                if nm == 13: nm=1; ny+=1
+                st.session_state['manager_ref_date'] = ref_date.replace(year=ny, month=nm)
+                st.rerun()
+
+        st.markdown("###") # Spacer
+
+        # --- DATA FILTERING ---
+        bills_all = list_data.get('bills', [])
+        bills = []
+        for b in bills_all:
+             try:
+                 bd = datetime.strptime(b['due_date'], "%Y-%m-%d").date()
+                 if bd.year == ref_date.year and bd.month == ref_date.month:
+                     bills.append(b)
+             except: pass
+        
+        # --- KPIS & CARDS ---
+        today = datetime.today().date()
+        overdue = [b for b in bills if b['status'] != 'PAID' and datetime.strptime(b['due_date'], "%Y-%m-%d").date() < today]
+        paid = [b for b in bills if b['status'] == 'PAID']
+        pending = [b for b in bills if b['status'] != 'PAID' and b not in overdue] # Future pending
+        next7 = [b for b in pending if today <= datetime.strptime(b['due_date'], "%Y-%m-%d").date() <= today + timedelta(days=7)]
+        
+        val_pending = sum(b['amount'] for b in overdue + pending)
+        
+        k1, k2, k3, k4 = st.columns(4)
+        
+        def _kpi_card(col, label, val, color="#FFF"):
+            col.markdown(f"""
+            <div style="border: 1px solid #333; border-radius: 8px; padding: 10px; text-align: center; background-color: #1E1E1E;">
+                <span style="color: #888; font-size: 0.8rem;">{label}</span><br>
+                <span style="color: {color}; font-size: 1.2rem; font-weight: bold;">{val}</span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        _kpi_card(k1, "Total Itens", len(bills))
+        _kpi_card(k2, "Atrasados", len(overdue), "#FF4B4B" if overdue else "#FFF")
+        _kpi_card(k3, "Próximos 7 Dias", len(next7), "#FFAE00" if next7 else "#FFF")
+        _kpi_card(k4, "Valor Pendente", f"R$ {val_pending:,.2f}", "#6495ED")
+
+        st.markdown("---")
+
+        # --- ACTIONS SECTION ---
+        ac1, ac2 = st.columns([3, 1])
+        search = ac1.text_input("🔍 Buscar conta...", label_visibility="collapsed")
+        
+        # Use Expander instead of Popover for robustness
+        with ac2:
+            with st.expander("➕ Adicionar Item", expanded=False):
+                with st.form("new_bill_simple"):
+                    st.caption("Nova Conta")
+                    n_name = st.text_input("Nome")
+                    n_val = st.number_input("Valor", min_value=0.0, step=10.0)
+                    n_due = st.date_input("Vencimento", value=datetime.today())
+                    n_assignee = st.selectbox("Responsável", list_data['members'], index=0)
+                    
+                    if st.form_submit_button("Salvar"):
+                        if not n_name:
+                            st.error("Nome obrigatório")
+                        else:
+                            payload = {
+                                "name": n_name,
+                                "amount": n_val,
+                                "due_date": n_due.strftime("%Y-%m-%d"),
+                                "status": "PENDING",
+                                "assignee": n_assignee
+                            }
+                            ok, msg = bills_manager.save_bill(list_id, payload, username)
+                            if ok:
+                                st.success("Salvo!")
+                                st.rerun()
+                            else:
+                                st.error(msg)
+
+        if search:
+            bills = [b for b in bills if search.lower() in b['name'].lower()]
+            # Filter sub-lists again
+            overdue = [b for b in bills if b in overdue]
+            pending = [b for b in bills if b in pending]
+            paid = [b for b in bills if b in paid]
+
+        # --- MAIN CONTENT ---
+        main_col, side_col = st.columns([3, 1])
+        
+        # SIDEBAR: SPLIT
+        with side_col:
+            st.markdown("### 📊 Divisão")
+            with st.container(border=True):
+                # Calculate per assignee
+                stats = {}
+                for b in bills:
+                    who = b.get('assignee', 'N/A')
+                    if who not in stats: stats[who] = {'total':0, 'paid':0}
+                    stats[who]['total'] += b['amount']
+                    if b['status'] == 'PAID': stats[who]['paid'] += b['amount']
+                
+                if not stats:
+                    st.caption("Sem dados.")
+                
+                for p, s in stats.items():
+                    pend = s['total'] - s['paid']
+                    st.markdown(f"**{p.split('@')[0]}**")
+                    if pend > 0:
+                        st.caption(f"Falta pagar: :red[R$ {pend:,.2f}]")
+                    else:
+                        st.caption(":green[Quitado!]")
+                    st.progress(s['paid']/s['total'] if s['total'] > 0 else 0)
+                    st.divider()
+
+        # ROWS: BILLS
+        with main_col:
+            # Helper for rows
+            def _render_row(b, style="default"):
+                bid = b['id']
+                bname = b['name']
+                bamt = b['amount']
+                bdate = datetime.strptime(b['due_date'], "%Y-%m-%d").strftime("%d/%m")
+                bassign = b.get('assignee', '').split('@')[0]
+                
+                # Styles
+                border_c = "#333"
+                if style == "overdue": border_c = "#FF4B4B"
+                elif style == "paid": border_c = "#2ECC71"
+                
+                with st.container(border=True):
+                    # Hack CSS local if possible or just standard cols
+                    c1, c2, c3, c4 = st.columns([3, 2, 2, 1.5])
+                    c1.markdown(f"**{bname}**")
+                    c1.caption(f"👤 {bassign}")
+                    
+                    c2.markdown(f"📅 {bdate}")
+                    c3.markdown(f"R$ {bamt:,.2f}")
+                    
+                    with c4:
+                        if style == "paid":
+                            if st.button("↩️", key=f"rev_{bid}"):
+                                bills_manager.toggle_status(list_id, bid, "PENDING")
+                                st.rerun()
+                        else:
+                            if st.button("✅", key=f"pay_{bid}"):
+                                bills_manager.toggle_status(list_id, bid, "PAID")
+                                st.rerun()
+                            if st.button("🗑️", key=f"del_{bid}"):
+                                bills_manager.delete_bill(list_id, bid)
+                                st.rerun()
+
+            if overdue:
+                st.markdown("#### 🚨 Atrasados")
+                for x in overdue: _render_row(x, "overdue")
+            
+            st.markdown("#### 📅 Pendentes")
+            if pending:
+                for x in pending: _render_row(x, "default")
+            elif not overdue:
+                st.info("Nada pendente!")
+                
+            if paid:
+                with st.expander(f"Pagos ({len(paid)})"):
+                    for x in paid: _render_row(x, "paid")
+
+def _render_bill_card_v2(bill, list_id, username, type):
+    pass # Deprecated/Merged above
+

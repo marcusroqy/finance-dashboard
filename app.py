@@ -9,6 +9,7 @@ import views
 import ai_consultant
 import rules_manager
 import auth
+import budget_manager # [NEW] Import manager
 import time
 
 # Configuração da Página
@@ -361,6 +362,11 @@ entradas, saidas, saidas_abs, saldo, taxa_poupanca = transform.get_kpis(df_filte
 # Calcula Comparativo (Mês/Período Anterior)
 delta_saidas, delta_entradas, _, _ = transform.get_period_comparison(df, start_date, end_date)
 
+# [NEW] Sincroniza Meta Global com a soma das Metas Detalhadas (se houver)
+total_detailed_budget = sum(user_budgets.values()) if 'user_budgets' in locals() else 0
+if total_detailed_budget > 0:
+    meta_gastos = total_detailed_budget
+
 # Detecta Assinaturas
 subs_df = transform.detect_subscriptions(df)
 
@@ -381,8 +387,12 @@ st.caption(f"Visão geral de **{start_date.strftime('%d/%m/%Y')}** até **{end_d
 
 st.markdown("---")
 
+# Carrega Metas do Usuário
+import budget_manager # Garantir import
+user_budgets = budget_manager.load_budgets(st.session_state['username'])
+
 # Abas de navegação
-tab_overview, tab_categories, tab_pix, tab_subs, tab_ai, tab_teach, tab_data = st.tabs(["📅 Visão Geral", "📊 Categorias", "💠 Pix", "🔄 Assinaturas", "🧠 Consultor IA", "🎓 Ensinar IA", "📝 Extrato"])
+tab_overview, tab_categories, tab_pix, tab_subs, tab_metas, tab_manager, tab_ai, tab_teach, tab_data = st.tabs(["📅 Visão Geral", "📊 Categorias", "💠 Pix", "🔄 Assinaturas", "🎯 Metas", "🧾 Gestor", "🧠 Consultor IA", "🎓 Ensinar IA", "📝 Extrato"])
 
 with tab_overview:
     # Empacota dados para a view
@@ -405,6 +415,13 @@ with tab_subs:
         st.metric("Estimativa Custo Fixo Mensal", f"R$ {subs_df['Valor Médio'].abs().sum():,.2f}")
     else:
         st.info("Nenhuma assinatura recorrente detectada com clareza ainda.")
+
+with tab_metas:
+    views.render_budget_tab(df_filtered, user_budgets, st.session_state['username'])
+
+with tab_manager:
+    # Gestor de Contas Manual
+    views.render_manager_tab(st.session_state['username'])
 
 with tab_ai:
     st.markdown("### 🧠 Consultor Financeiro IA")
